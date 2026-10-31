@@ -1,10 +1,39 @@
-"""One-function, read-only Aquavar CPC pump snapshot."""
+"""Read-only Aquavar CPC pump snapshot with optional port auto-detection."""
 
 from __future__ import annotations  # lets the type hints below run on Python 3.7+
 
+import glob
+
+
+def _find_pump_port() -> str:
+    """Return a USB serial device path without opening it.
+
+    Detection is filesystem-only, so it costs a couple of directory lookups and
+    never touches the bus. Explicitly passing ``port`` to ``read_pump`` skips
+    this entirely. The FTDI FT230X adapter used in the field is preferred when
+    ``/dev/serial/by-id`` offers more than one candidate.
+    """
+    by_id = sorted(glob.glob("/dev/serial/by-id/*"))
+    preferred = [path for path in by_id if "FTDI" in path or "FT230" in path]
+    candidates = preferred or by_id
+    if not candidates:
+        candidates = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
+    if not candidates:
+        raise RuntimeError(
+            "No serial device found; connect the USB adapter or pass port= "
+            "explicitly (for example '/dev/ttyUSB0')"
+        )
+    if len(candidates) > 1:
+        raise RuntimeError(
+            "Multiple serial devices found: "
+            + ", ".join(candidates)
+            + "; pass port= explicitly to choose one"
+        )
+    return candidates[0]
+
 
 def read_pump(
-    port: str,
+    port: str | None = None,
     *,
     slave: int = 1,
     baudrate: int = 9600,
@@ -27,7 +56,9 @@ def read_pump(
              the pump runs.
 
     Args:
-        port: Serial device, for example ``/dev/ttyUSB0``.
+        port: Serial device, for example ``/dev/ttyUSB0``. When ``None``, a USB
+            adapter is auto-detected from ``/dev/serial/by-id`` (preferring the
+            FTDI FT230X), then ``/dev/ttyUSB*``/``/dev/ttyACM*``.
         slave: VFD Modbus station ID (parameter 3202).
         baudrate: VFD Modbus baud rate (parameter 3203).
         timeout: Maximum seconds to wait for each reply.
@@ -63,6 +94,8 @@ def read_pump(
             "'python3 -m pip install pyserial'"
         ) from exc
 
+    if port is None:
+        port = _find_pump_port()
     if not isinstance(port, str) or not port.strip():
         raise ValueError("port must be a serial-device name such as '/dev/ttyUSB0'")
     if isinstance(slave, bool) or not isinstance(slave, int) or not 1 <= slave <= 247:
@@ -477,9 +510,9 @@ def read_pump(
 
 
 if __name__ == "__main__":
-    # Quick field check: python3 read_pump.py /dev/ttyUSB0
+    # Quick field check: python3 read_pump.py [port]
     import json
     import sys
 
-    print(json.dumps(read_pump(sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyUSB0"),
+    print(json.dumps(read_pump(sys.argv[1] if len(sys.argv) > 1 else None),
                      indent=2, ensure_ascii=False))
