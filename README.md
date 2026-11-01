@@ -62,29 +62,24 @@ Environment overrides: `PUMP_DB`, `PUMP_HOST`, `PUMP_PORT`,
 
 ## Install as a service
 
-The checked-in unit is set up for a user named `pmops` with the repo at
-`/home/pmops/pump-test`.  Edit these four lines to match the target machine
-before installing:
-
-```ini
-User=pmops
-Group=dialout
-WorkingDirectory=/home/pmops/pump-test
-ExecStart=/usr/bin/python3 -B /home/pmops/pump-test/pump_dashboard.py
-```
-
-`Group=dialout` is what grants access to `/dev/ttyUSB0`; `User=` drops root
-privileges, so the sampler does not run as root just to open the serial port.
-The user must exist and own (or be able to read) the checkout.
-
-Then:
-
 ```sh
-sudo cp pump-dashboard.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now pump-dashboard
-systemctl status pump-dashboard
+sudo ./install.sh
 ```
+
+The script fills in `User=`, `Group=`, `WorkingDirectory=` and `ExecStart=`
+from the machine it runs on, installs the unit, enables it, and (re)starts the
+service.  Re-running it is safe.
+
+- `User` defaults to `$SUDO_USER`, falling back to the owner of the checkout.
+  Override with `sudo ./install.sh --user someuser`.
+- `Group` defaults to `dialout`, which is what grants access to
+  `/dev/ttyUSB0`.  Override with `--group`.
+- `WorkingDirectory` is the directory containing the script.
+- `ExecStart` uses the `python3` found on the invoking user's `PATH`.  For a
+  virtualenv, pass `--python /path/to/.venv/bin/python3`.
+
+If the account is not already in `dialout`, the script adds it (for running
+the sampler by hand; the unit's `Group=` is sufficient for the service).
 
 The unit sets `PYTHONDONTWRITEBYTECODE=1`, disables core dumps, gives the
 service a private `/tmp`, and writes logs to `/dev/shm/pump-dashboard.log`
@@ -93,6 +88,18 @@ service a private `/tmp`, and writes logs to `/dev/shm/pump-dashboard.log`
 Serving on `0.0.0.0:8080` is the whole deployment.  Reaching it from outside
 the LAN (VPN, Tailscale Funnel, reverse proxy, etc.) is optional and is not
 part of this repository.
+
+### Manual install
+
+If you would rather not use the script, edit the four machine-specific lines
+in `pump-dashboard.service`, then:
+
+```sh
+sudo cp pump-dashboard.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pump-dashboard
+systemctl status pump-dashboard
+```
 
 ## Web UI
 
