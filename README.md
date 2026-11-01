@@ -103,11 +103,15 @@ systemctl status pump-dashboard
 
 ## Web UI
 
-- Range buttons: 1h / 6h / 24h / 48h / 72h / 7d.
-- Drag to zoom; the visible window is re-fetched with a bucket size matched to
-  the zoom (`max(1 s, window / 1500)`, rounded up to a readable interval).
-- Double-click or **Reset zoom** returns to the selected range.
+- Range buttons: 1h / 6h / 24h / 48h / 72h / 7d.  They set the starting window.
+- Scroll (or pinch on a trackpad) to zoom continuously around the cursor; drag
+  to zoom into a selection.  The visible window is re-fetched after a short
+  debounce with a bucket size matched to the zoom
+  (`max(1 s, window / 1500)`, rounded up to a readable interval).
+- Double-click or **Reset zoom** returns to the selected range button.
 - Check any combination of measurements; each unit gets its own y-axis.
+- **Running** is derived from the decoded status summary: 100% at 1 s buckets,
+  and the percentage of each bucket the pump was running when zoomed out.
 - Tiles and the status/fault banner poll `/api/latest` every 2 s.
 
 ## Storage notes

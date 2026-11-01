@@ -145,7 +145,8 @@
 </main>
 
 <footer>
-  Drag to zoom · double-click or “Reset zoom” to return to the selected range.
+  Scroll or drag to zoom · range buttons set the starting window ·
+  double-click or “Reset zoom” to return.
   Data is sampled at 1 Hz and kept in RAM for 7 days (cleared on reboot).
 </footer>
 
@@ -166,6 +167,9 @@
     "pressure", "setpoint", "motor_freq_hz", "motor_current_a",
     "motor_power_kw", "dc_bus_v", "drive_temp_c", "energy_kwh",
   ];
+  const MIN_SPAN_MS = 5 * 1000;        // don't zoom in past a few samples
+  const MAX_SPAN_MS = 7 * 86400e3;     // matches server retention
+  const ZOOM_DEBOUNCE_MS = 200;        // refetch after the wheel settles
 
   const $ = (id) => document.getElementById(id);
   const chartEl = $("chart");
@@ -463,6 +467,7 @@
         downY = event.clientY;
       });
       plot.over.addEventListener("mouseup", onMouseUp);
+      plot.over.addEventListener("wheel", onWheel, { passive: false });
 
       if (resizeObserver) resizeObserver.disconnect();
       resizeObserver = new ResizeObserver(() => {
@@ -494,18 +499,70 @@
     });
   }
 
+  function onWheel(event) {
+    if (!plot) return;
+    const scale = plot.scales.x;
+    const min = scale.min;
+    const max = scale.max;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
+
+    event.preventDefault();
+
+    const rect = plot.over.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const px = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+    const anchor = plot.posToVal(px, "x");
+    if (!Number.isFinite(anchor)) return;
+
+    // deltaMode 1 is lines (Firefox), 2 is pages; normalise to pixels.
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
+    const delta = event.deltaY * unit;
+    const factor = Math.exp(delta * 0.0015);
+    const span = max - min;
+    const newSpan = Math.min(
+      Math.max(span * factor, MIN_SPAN_MS / 1000),
+      MAX_SPAN_MS / 1000
+    );
+    const ratio = (anchor - min) / span;
+
+    let newMin = anchor - ratio * newSpan;
+    let newMax = newMin + newSpan;
+
+    // Keep the window inside the server's retention range.
+    const now = Date.now() / 1000;
+    const earliest = now - MAX_SPAN_MS / 1000;
+    if (newMin < earliest) {
+      newMin = earliest;
+      newMax = earliest + newSpan;
+    }
+    if (newMax > now) {
+      newMax = now;
+      newMin = now - newSpan;
+    }
+    if (newMin < earliest || newMax - newMin < MIN_SPAN_MS / 1000) return;
+
+    plot.setScale("x", { min: newMin, max: newMax });
+    scheduleZoom(newMin, newMax);
+  }
+
   function scheduleZoom(min, max) {
+    const from = Math.round(min * 1000);
+    const to = Math.round(max * 1000);
+    if (to - from < MIN_SPAN_MS) {
+      applyXScale(currentFrom / 1000, currentTo / 1000);
+      return;
+    }
+
     zoomed = true;
     updateRangeButtons();
+    // Move the target immediately so an in-flight response cannot snap the
+    // chart back to the previous window while the refetch is debounced.
+    currentFrom = from;
+    currentTo = to;
     clearTimeout(zoomTimer);
     zoomTimer = setTimeout(() => {
-      const from = Math.round(min * 1000);
-      const to = Math.round(max * 1000);
-      if (to - from < 1000) return;
-      currentFrom = from;
-      currentTo = to;
-      loadSeries(from, to);
-    }, 250);
+      loadSeries(currentFrom, currentTo);
+    }, ZOOM_DEBOUNCE_MS);
   }
 
   async function loadSeries(from, to) {
@@ -546,6 +603,7 @@
   }
 
   function rebuildPlot() {
+    clearTimeout(zoomTimer);
     if (plot) {
       plot.destroy();
       plot = null;
@@ -557,6 +615,7 @@
   function setRange(id) {
     const range = RANGES.find((item) => item.id === id);
     if (!range) return;
+    clearTimeout(zoomTimer);
     activeRange = id;
     zoomed = false;
     const to = Date.now();

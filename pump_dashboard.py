@@ -52,6 +52,7 @@ STATIC_DIR = os.path.join(HERE, "static")
 # unit comes from the drive's process-unit register (usually psi) and is filled
 # in from the latest sample.
 FIELDS = [
+    {"key": "running", "label": "Running", "unit": "%", "color": "#4ade80", "group": "Status"},
     {"key": "pressure", "label": "Pressure", "unit": "process", "color": "#3b82f6", "group": "Pressure"},
     {"key": "setpoint", "label": "Setpoint", "unit": "process", "color": "#f59e0b", "group": "Pressure"},
     {"key": "active_setpoint", "label": "Active setpoint", "unit": "process", "color": "#fbbf24", "group": "Pressure"},
@@ -76,6 +77,13 @@ FIELDS = [
 ]
 FIELD_KEYS = {field["key"] for field in FIELDS}
 DEFAULT_FIELDS = ["pressure", "setpoint", "motor_freq_hz", "motor_current_a"]
+
+# Fields that are derived at query time rather than stored as a column.  The
+# running flag is the decoded status summary; averaging it over a bucket gives
+# the percentage of that bucket the pump was running (0/100 at 1 s buckets).
+FIELD_SQL = {
+    "running": "avg(CASE WHEN status = 'running' THEN 100.0 ELSE 0.0 END)",
+}
 
 SAMPLE_COLUMNS = [
     "ts", "dur_ms",
@@ -366,7 +374,7 @@ def series_payload(con: sqlite3.Connection, from_ms: int, to_ms: int, fields: li
     bucket = nice_bucket(target)
     start = (from_ms // bucket) * bucket
 
-    select = ", ".join(f"avg({key})" for key in fields)
+    select = ", ".join(FIELD_SQL.get(key, f"avg({key})") for key in fields)
     sql = (
         f"SELECT (ts / {bucket}) * {bucket} AS b, {select} "
         "FROM samples WHERE ts >= ? AND ts < ? GROUP BY b ORDER BY b"
@@ -464,8 +472,11 @@ class Handler(BaseHTTPRequestHandler):
             ]
         finally:
             con.close()
+        sample = dict(row) if row else None
+        if sample:
+            sample["running"] = 100.0 if sample.get("status") == "running" else 0.0
         return {
-            "sample": dict(row) if row else None,
+            "sample": sample,
             "errors": errors,
             "stats": {
                 "oldest_ts": bounds[0],
