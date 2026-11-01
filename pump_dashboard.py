@@ -36,7 +36,7 @@ SAMPLE_RETRIES = int(os.environ.get("PUMP_RETRIES", "0"))
 MAINTENANCE_S = 60
 MAX_BUCKETS = 1500
 MAX_ERROR_ROWS = 20000
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Bucket widths that produce readable axis ticks.
 NICE_BUCKETS_S = (
@@ -78,20 +78,13 @@ FIELDS = [
 FIELD_KEYS = {field["key"] for field in FIELDS}
 DEFAULT_FIELDS = ["pressure", "setpoint", "motor_freq_hz", "motor_current_a"]
 
-# Fields that are derived at query time rather than stored as a column.  The
-# running flag is the decoded status summary; averaging it over a bucket gives
-# the percentage of that bucket the pump was running (0/100 at 1 s buckets).
-FIELD_SQL = {
-    "running": "avg(CASE WHEN status = 'running' THEN 100.0 ELSE 0.0 END)",
-}
-
 SAMPLE_COLUMNS = [
     "ts", "dur_ms",
     "pressure", "setpoint", "active_setpoint", "setpoint_1", "setpoint_2",
     "pump_freq_hz", "motor_freq_hz", "motor_current_a", "motor_power_kw",
     "system_power_hp", "motor_voltage_v", "dc_bus_v", "drive_temp_c",
     "ai1_pct", "transducer_pct", "ao1_ma", "ao2_ma",
-    "powered_h", "run_h", "energy_kwh", "savings_usd",
+    "powered_h", "run_h", "energy_kwh", "savings_usd", "running",
     "process_unit", "pump_label", "status",
     "status_low", "status_high", "fault_last", "fault_last_name",
     "fault_w0", "fault_w1", "fault_w2", "alarm_w0", "alarm_w1",
@@ -130,6 +123,7 @@ CREATE TABLE IF NOT EXISTS samples (
   run_h REAL,
   energy_kwh REAL,
   savings_usd REAL,
+  running REAL,
   process_unit TEXT,
   pump_label TEXT,
   status TEXT,
@@ -270,6 +264,7 @@ def build_row(sample: dict, ts_ms: int) -> tuple:
         _value(sample, "motor_run_time"),
         _value(sample, "energy"),
         _value(sample, "calculated_energy_savings"),
+        100.0 if status["summary"] == "running" else 0.0,
         sample["pressure"]["unit"],
         sample["pump"]["label"],
         status["summary"],
@@ -374,7 +369,7 @@ def series_payload(con: sqlite3.Connection, from_ms: int, to_ms: int, fields: li
     bucket = nice_bucket(target)
     start = (from_ms // bucket) * bucket
 
-    select = ", ".join(FIELD_SQL.get(key, f"avg({key})") for key in fields)
+    select = ", ".join(f"avg({key})" for key in fields)
     sql = (
         f"SELECT (ts / {bucket}) * {bucket} AS b, {select} "
         "FROM samples WHERE ts >= ? AND ts < ? GROUP BY b ORDER BY b"
@@ -473,8 +468,6 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             con.close()
         sample = dict(row) if row else None
-        if sample:
-            sample["running"] = 100.0 if sample.get("status") == "running" else 0.0
         return {
             "sample": sample,
             "errors": errors,

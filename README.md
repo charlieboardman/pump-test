@@ -110,8 +110,9 @@ systemctl status pump-dashboard
   (`max(1 s, window / 1500)`, rounded up to a readable interval).
 - Double-click or **Reset zoom** returns to the selected range button.
 - Check any combination of measurements; each unit gets its own y-axis.
-- **Running** is derived from the decoded status summary: 100% at 1 s buckets,
-  and the percentage of each bucket the pump was running when zoomed out.
+- **Running** is stored per sample (0 or 100) from the decoded status summary;
+  at 1 s buckets it is 0/100, and when zoomed out it is the percentage of each
+  bucket the pump was running.
 - Tiles and the status/fault banner poll `/api/latest` every 2 s.
 
 ## Storage notes
