@@ -597,9 +597,14 @@
     const bucket = payload.bucket_ms >= 60000
       ? (payload.bucket_ms / 60000).toFixed(1) + " min"
       : (payload.bucket_ms / 1000).toFixed(0) + " s";
+    let filled = 0;
+    for (let i = 0; i < payload.t.length; i++) {
+      if (fields.some((key) => payload.series[key][i] != null)) filled++;
+    }
     windowEl.textContent =
       new Date(from).toLocaleString() + " → " + new Date(to).toLocaleString() +
-      " · " + payload.t.length + " points · " + bucket + " buckets";
+      " · " + payload.t.length + " buckets · " + bucket + " each · " +
+      filled + " with data";
   }
 
   function rebuildPlot() {
