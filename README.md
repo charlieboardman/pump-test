@@ -25,6 +25,31 @@ pump_dashboard.py
 - The sampler uses `timeout=0.25, retries=0`, so even a failed read fits inside
   its one-second slot.
 
+## Requirements
+
+- Python 3.9+ (standard library only, apart from `pyserial`)
+- `pyserial` for the USB serial link to the VFD
+
+On Debian/Raspberry Pi OS the packaged version is enough:
+
+```sh
+sudo apt install python3-serial
+```
+
+Or, in a virtualenv:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+The user that runs the service must be able to open the serial device
+(`/dev/ttyUSB0`), which normally means membership in the `dialout` group:
+
+```sh
+sudo usermod -aG dialout "$USER"   # log out/in afterwards
+```
+
 ## Run manually
 
 ```sh
@@ -37,6 +62,23 @@ Environment overrides: `PUMP_DB`, `PUMP_HOST`, `PUMP_PORT`,
 
 ## Install as a service
 
+The checked-in unit is set up for a user named `pmops` with the repo at
+`/home/pmops/pump-test`.  Edit these four lines to match the target machine
+before installing:
+
+```ini
+User=pmops
+Group=dialout
+WorkingDirectory=/home/pmops/pump-test
+ExecStart=/usr/bin/python3 -B /home/pmops/pump-test/pump_dashboard.py
+```
+
+`Group=dialout` is what grants access to `/dev/ttyUSB0`; `User=` drops root
+privileges, so the sampler does not run as root just to open the serial port.
+The user must exist and own (or be able to read) the checkout.
+
+Then:
+
 ```sh
 sudo cp pump-dashboard.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -44,9 +86,13 @@ sudo systemctl enable --now pump-dashboard
 systemctl status pump-dashboard
 ```
 
-The unit runs as `pmops:dialout`, sets `PYTHONDONTWRITEBYTECODE=1`, disables
-core dumps, gives the service a private `/tmp`, and writes logs to
-`/dev/shm/pump-dashboard.log` (RAM) rather than the SD card.
+The unit sets `PYTHONDONTWRITEBYTECODE=1`, disables core dumps, gives the
+service a private `/tmp`, and writes logs to `/dev/shm/pump-dashboard.log`
+(RAM) rather than the SD card.
+
+Serving on `0.0.0.0:8080` is the whole deployment.  Reaching it from outside
+the LAN (VPN, Tailscale Funnel, reverse proxy, etc.) is optional and is not
+part of this repository.
 
 ## Web UI
 
