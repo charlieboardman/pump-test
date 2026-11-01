@@ -547,7 +547,11 @@ def main() -> None:
     server_thread.start()
     print(f"pump-dashboard: http://{HOST}:{PORT}/", flush=True)
 
-    stop.wait()
+    while not stop.is_set():
+        if not sampler_thread.is_alive() or not server_thread.is_alive():
+            print("pump-dashboard: worker thread died; exiting for restart", flush=True)
+            break
+        stop.wait(1.0)
 
     server.shutdown()
     server.server_close()
