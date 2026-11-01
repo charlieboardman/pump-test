@@ -2,7 +2,8 @@
 #
 # Install the pump dashboard systemd unit for this checkout and machine.
 #
-# Rewrites User=, Group=, WorkingDirectory= and ExecStart= in
+# Creates a dedicated system account for the service (pumpdash by default),
+# rewrites User=, Group=, WorkingDirectory= and ExecStart= in
 # pump-dashboard.service, installs it, then enables and (re)starts the service.
 # Safe to re-run.
 #
@@ -14,19 +15,22 @@ REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 UNIT_SOURCE="$REPO_DIR/pump-dashboard.service"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
+DEFAULT_SYSTEM_USER="pumpdash"
 TARGET_USER=""
 TARGET_GROUP="dialout"
 PYTHON_BIN=""
+CREATE_USER=0
 
 usage() {
     cat <<EOF
 Usage: sudo $0 [options]
 
-  --user NAME     account to run the service as
-                  (default: \$SUDO_USER, or the owner of this checkout)
-  --group NAME    group that can open the serial device (default: dialout)
-  --python PATH   python3 interpreter to run (default: python3 on PATH)
-  -h, --help      show this help
+  --system-user NAME  create (if needed) and run as a system account
+                      (default: pumpdash)
+  --user NAME         run as an existing account instead
+  --group NAME        group that can open the serial device (default: dialout)
+  --python PATH       python3 interpreter to run (default: python3 on PATH)
+  -h, --help          show this help
 
 Environment:
   PYTHON=/path/to/python3   same as --python
@@ -35,8 +39,14 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --system-user)
+            TARGET_USER="${2:?--system-user needs a value}"
+            CREATE_USER=1
+            shift 2
+            ;;
         --user)
             TARGET_USER="${2:?--user needs a value}"
+            CREATE_USER=0
             shift 2
             ;;
         --group)
@@ -68,21 +78,28 @@ done
 # Resolve defaults before escalating, so the invoking account and PATH are
 # used rather than root's.
 if [[ $EUID -ne 0 ]]; then
-    TARGET_USER="${TARGET_USER:-${SUDO_USER:-$(id -un)}}"
+    if [[ -z "$TARGET_USER" ]]; then
+        TARGET_USER="$DEFAULT_SYSTEM_USER"
+        CREATE_USER=1
+    fi
     PYTHON_BIN="${PYTHON_BIN:-${PYTHON:-$(command -v python3)}}"
+    if [[ $CREATE_USER -eq 1 ]]; then
+        user_flag="--system-user"
+    else
+        user_flag="--user"
+    fi
     exec sudo bash "$SCRIPT_PATH" \
-        --user "$TARGET_USER" \
+        "$user_flag" "$TARGET_USER" \
         --group "$TARGET_GROUP" \
         --python "$PYTHON_BIN"
 fi
 
-TARGET_USER="${TARGET_USER:-${SUDO_USER:-$(stat -c %U "$REPO_DIR")}}"
+if [[ -z "$TARGET_USER" ]]; then
+    TARGET_USER="$DEFAULT_SYSTEM_USER"
+    CREATE_USER=1
+fi
 PYTHON_BIN="${PYTHON_BIN:-${PYTHON:-$(command -v python3)}}"
 
-id -u "$TARGET_USER" >/dev/null 2>&1 || {
-    echo "user does not exist: $TARGET_USER" >&2
-    exit 1
-}
 getent group "$TARGET_GROUP" >/dev/null || {
     echo "group does not exist: $TARGET_GROUP" >&2
     exit 1
@@ -92,6 +109,31 @@ getent group "$TARGET_GROUP" >/dev/null || {
     exit 1
 }
 
+# logind's RemoveIPC cleanup unlinks /dev/shm objects owned by the UID whose
+# last session just ended.  The database therefore has to belong to an account
+# that never logs in.  Using a system account also lets RemoveIPC stay at its
+# default (yes), so /dev/shm still gets cleaned up after a normal user logs out.
+if [[ $CREATE_USER -eq 1 ]] && ! id -u "$TARGET_USER" >/dev/null 2>&1; then
+    echo "creating system user $TARGET_USER"
+    useradd --system --no-create-home --home-dir /nonexistent \
+            --shell /usr/sbin/nologin --groups "$TARGET_GROUP" "$TARGET_USER"
+fi
+
+id -u "$TARGET_USER" >/dev/null 2>&1 || {
+    echo "user does not exist: $TARGET_USER" >&2
+    exit 1
+}
+
+if [[ "$TARGET_USER" != "root" ]] && (( $(id -u "$TARGET_USER") >= 1000 )); then
+    if [[ $CREATE_USER -eq 1 ]]; then
+        echo "error: --system-user $TARGET_USER exists but is a login account (uid $(id -u "$TARGET_USER"))" >&2
+        echo "       choose another name, or pass --user $TARGET_USER to accept it" >&2
+        exit 1
+    fi
+    echo "warning: $TARGET_USER is a login account (uid $(id -u "$TARGET_USER"));" >&2
+    echo "         logind may delete /dev/shm/pump.db when that user logs out" >&2
+fi
+
 # Group= in the unit is enough for the service, but membership also lets the
 # account run the sampler by hand.
 if [[ "$TARGET_USER" != "root" ]] &&
@@ -100,32 +142,52 @@ if [[ "$TARGET_USER" != "root" ]] &&
     usermod -aG "$TARGET_GROUP" "$TARGET_USER"
 fi
 
-# systemd-logind's RemoveIPC cleanup deletes user-owned files in /dev/shm when
-# the last session for that user ends.  The database lives there, so disable
-# that cleanup or a logout will unlink pump.db while the sampler keeps writing
-# to the deleted inode.
-LOGIND_DROPIN_DIR=/etc/systemd/logind.conf.d
-LOGIND_DROPIN="$LOGIND_DROPIN_DIR/99-pump-dashboard.conf"
-install -d -m 0755 "$LOGIND_DROPIN_DIR"
-cat > "$LOGIND_DROPIN" <<'EOF'
-# Keep /dev/shm/pump.db alive when the last login session ends.  logind treats
-# user-owned files in /dev/shm as POSIX shared memory and removes them on
-# logout (RemoveIPC defaults to yes).
-[Login]
-RemoveIPC=no
-EOF
-chmod 0644 "$LOGIND_DROPIN"
+# The checkout usually lives under the installing user's home directory, which
+# is not traversable by a system account.  Grant execute-only (not read) access
+# on the path, and only where it is missing, so re-runs are no-ops.
+if [[ "$TARGET_USER" != "root" ]] &&
+   ! runuser -u "$TARGET_USER" -- test -r "$REPO_DIR/pump_dashboard.py"; then
+    d="$REPO_DIR"
+    while [[ "$d" != "/" ]]; do
+        mode="$(stat -c %a "$d")"
+        if (( (8#$mode & 1) == 0 )); then
+            echo "granting $TARGET_USER traverse permission on $d"
+            chmod o+x "$d"
+        fi
+        d="$(dirname "$d")"
+    done
+    runuser -u "$TARGET_USER" -- test -r "$REPO_DIR/pump_dashboard.py" || {
+        echo "$TARGET_USER still cannot read $REPO_DIR" >&2
+        exit 1
+    }
+fi
 
-# A reload is enough on current systemd; otherwise ask for one reboot.
-systemctl reload systemd-logind 2>/dev/null || true
+# Older versions disabled logind's RemoveIPC globally.  That is no longer
+# needed now that the database belongs to a system account, so drop the
+# override and put /dev/shm cleanup back to its default.
+LOGIND_DROPIN=/etc/systemd/logind.conf.d/99-pump-dashboard.conf
+if [[ -e "$LOGIND_DROPIN" ]]; then
+    rm -f "$LOGIND_DROPIN"
+    rmdir --ignore-fail-on-non-empty "$(dirname "$LOGIND_DROPIN")" 2>/dev/null || true
+    systemctl reload systemd-logind 2>/dev/null || true
+    echo "removed $LOGIND_DROPIN (logind cleanup restored)"
+fi
 logind_ipc="$(busctl get-property org.freedesktop.login1 \
     /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC \
     2>/dev/null | awk '{print $2}' || true)"
-if [[ "$logind_ipc" == "false" ]]; then
-    echo "logind RemoveIPC is disabled"
-else
-    echo "installed $LOGIND_DROPIN; reboot to apply RemoveIPC=no"
+if [[ -n "$logind_ipc" ]]; then
+    echo "logind RemoveIPC=$logind_ipc"
 fi
+
+# The database files belong to the service account.  Stop the old instance
+# first, then hand over any files created by a previous owner.
+systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+DB_PATH="$(sed -n 's/^Environment=PUMP_DB=//p' "$UNIT_SOURCE" | head -n 1)"
+DB_PATH="${DB_PATH:-/dev/shm/pump.db}"
+for db_file in "$DB_PATH"*; do
+    [[ -e "$db_file" ]] || continue
+    chown "$TARGET_USER:$TARGET_GROUP" "$db_file"
+done
 
 if ! compgen -G "/dev/ttyUSB*" >/dev/null; then
     echo "warning: no /dev/ttyUSB* found; the sampler will report read errors until the VFD is connected" >&2

@@ -66,28 +66,28 @@ Environment overrides: `PUMP_DB`, `PUMP_HOST`, `PUMP_PORT`,
 sudo ./install.sh
 ```
 
-The script fills in `User=`, `Group=`, `WorkingDirectory=` and `ExecStart=`
-from the machine it runs on, installs the unit, enables it, and (re)starts the
-service.  Re-running it is safe.
+The script creates a dedicated system account (default `pumpdash`), fills in
+`User=`, `Group=`, `WorkingDirectory=` and `ExecStart=` from the machine it
+runs on, installs the unit, enables it, and (re)starts the service.  Re-running
+it is safe.
 
-- `User` defaults to `$SUDO_USER`, falling back to the owner of the checkout.
-  Override with `sudo ./install.sh --user someuser`.
+- The service runs as a system account that never logs in.  logind's
+  `RemoveIPC` cleanup unlinks `/dev/shm` objects owned by a user when that
+  user's last session ends; keeping the database owned by a system UID leaves
+  `RemoveIPC` at its default (`yes`) and the database untouched.  Override the
+  name with `--system-user NAME`, or run as an existing account with
+  `--user NAME` (not recommended: logging that account out can delete the
+  database).
 - `Group` defaults to `dialout`, which is what grants access to
   `/dev/ttyUSB0`.  Override with `--group`.
-- `WorkingDirectory` is the directory containing the script.
+- `WorkingDirectory` is the directory containing the script.  If that path is
+  not traversable by the system account (for example a `0700` home directory),
+  the script adds execute-only permission on the blocking directories.
 - `ExecStart` uses the `python3` found on the invoking user's `PATH`.  For a
   virtualenv, pass `--python /path/to/.venv/bin/python3`.
 
-If the account is not already in `dialout`, the script adds it (for running
-the sampler by hand; the unit's `Group=` is sufficient for the service).
-
-The database lives in `/dev/shm`, which systemd-logind treats as user IPC
-space.  The script also writes
-`/etc/systemd/logind.conf.d/99-pump-dashboard.conf` with `RemoveIPC=no`.
-Without that, logging out the service user deletes user-owned files in
-`/dev/shm` — including `pump.db` — while the sampler keeps writing to the
-deleted inode.  The script reloads logind and reports whether a reboot is
-still needed to apply the setting.
+The script also adds the account to `dialout` if needed (for running the
+sampler by hand; the unit's `Group=` is sufficient for the service).
 
 The unit sets `PYTHONDONTWRITEBYTECODE=1`, disables core dumps, gives the
 service a private `/tmp`, and writes logs to `/dev/shm/pump-dashboard.log`
@@ -99,15 +99,20 @@ part of this repository.
 
 ### Manual install
 
-If you would rather not use the script, edit the four machine-specific lines
-in `pump-dashboard.service`, then:
+If you would rather not use the script, create the system account first, edit
+the four machine-specific lines in `pump-dashboard.service`, then:
 
 ```sh
+sudo useradd --system --no-create-home --home-dir /nonexistent \
+    --shell /usr/sbin/nologin --groups dialout pumpdash
 sudo cp pump-dashboard.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now pump-dashboard
 systemctl status pump-dashboard
 ```
+
+Without the dedicated system account, the database belongs to a login user and
+logind may delete it from `/dev/shm` when that user's last session ends.
 
 ## Web UI
 
@@ -133,3 +138,8 @@ PRAGMA temp_store=MEMORY;     -- never spill to /tmp
 
 The writer checkpoints the WAL every minute.  Because everything lives in
 `/dev/shm`, the database, WAL, shared-memory file and logs are all RAM-backed.
+
+The database files are owned by the service's system account.  logind's
+`RemoveIPC` cleanup only removes `/dev/shm` objects owned by the UID that just
+logged out, so normal login sessions can still clean up their own shared
+memory without touching `pump.db`.

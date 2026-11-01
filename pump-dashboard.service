@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=pmops
+User=pumpdash
 Group=dialout
 WorkingDirectory=/home/pmops/pump-test
 Environment=PYTHONDONTWRITEBYTECODE=1
