@@ -81,6 +81,14 @@ service.  Re-running it is safe.
 If the account is not already in `dialout`, the script adds it (for running
 the sampler by hand; the unit's `Group=` is sufficient for the service).
 
+The database lives in `/dev/shm`, which systemd-logind treats as user IPC
+space.  The script also writes
+`/etc/systemd/logind.conf.d/99-pump-dashboard.conf` with `RemoveIPC=no`.
+Without that, logging out the service user deletes user-owned files in
+`/dev/shm` — including `pump.db` — while the sampler keeps writing to the
+deleted inode.  The script reloads logind and reports whether a reboot is
+still needed to apply the setting.
+
 The unit sets `PYTHONDONTWRITEBYTECODE=1`, disables core dumps, gives the
 service a private `/tmp`, and writes logs to `/dev/shm/pump-dashboard.log`
 (RAM) rather than the SD card.

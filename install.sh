@@ -100,6 +100,33 @@ if [[ "$TARGET_USER" != "root" ]] &&
     usermod -aG "$TARGET_GROUP" "$TARGET_USER"
 fi
 
+# systemd-logind's RemoveIPC cleanup deletes user-owned files in /dev/shm when
+# the last session for that user ends.  The database lives there, so disable
+# that cleanup or a logout will unlink pump.db while the sampler keeps writing
+# to the deleted inode.
+LOGIND_DROPIN_DIR=/etc/systemd/logind.conf.d
+LOGIND_DROPIN="$LOGIND_DROPIN_DIR/99-pump-dashboard.conf"
+install -d -m 0755 "$LOGIND_DROPIN_DIR"
+cat > "$LOGIND_DROPIN" <<'EOF'
+# Keep /dev/shm/pump.db alive when the last login session ends.  logind treats
+# user-owned files in /dev/shm as POSIX shared memory and removes them on
+# logout (RemoveIPC defaults to yes).
+[Login]
+RemoveIPC=no
+EOF
+chmod 0644 "$LOGIND_DROPIN"
+
+# A reload is enough on current systemd; otherwise ask for one reboot.
+systemctl reload systemd-logind 2>/dev/null || true
+logind_ipc="$(busctl get-property org.freedesktop.login1 \
+    /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC \
+    2>/dev/null | awk '{print $2}' || true)"
+if [[ "$logind_ipc" == "false" ]]; then
+    echo "logind RemoveIPC is disabled"
+else
+    echo "installed $LOGIND_DROPIN; reboot to apply RemoveIPC=no"
+fi
+
 if ! compgen -G "/dev/ttyUSB*" >/dev/null; then
     echo "warning: no /dev/ttyUSB* found; the sampler will report read errors until the VFD is connected" >&2
 fi
