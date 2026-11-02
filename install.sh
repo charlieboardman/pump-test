@@ -4,15 +4,15 @@
 #
 # Creates a dedicated system account for the service (pumpdash by default),
 # rewrites User=, Group=, WorkingDirectory= and ExecStart= in
-# pump-dashboard.service, installs it, then enables and (re)starts the service.
+# aquavar-vfd-monitor.service, installs it, then enables and (re)starts the service.
 # Safe to re-run.
 #
 set -euo pipefail
 
-SERVICE_NAME="pump-dashboard"
+SERVICE_NAME="aquavar-vfd-monitor"
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-UNIT_SOURCE="$REPO_DIR/pump-dashboard.service"
+UNIT_SOURCE="$REPO_DIR/aquavar-vfd-monitor.service"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
 DEFAULT_SYSTEM_USER="pumpdash"
@@ -216,7 +216,7 @@ systemctl restart "$SERVICE_NAME"
 sleep 2
 if ! systemctl is-active --quiet "$SERVICE_NAME"; then
     echo "$SERVICE_NAME failed to start; last log lines:" >&2
-    tail -n 20 /dev/shm/pump-dashboard.log 2>/dev/null || true
+    tail -n 20 /dev/shm/aquavar-vfd-monitor.log 2>/dev/null || true
     exit 1
 fi
 

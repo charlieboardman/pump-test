@@ -6,12 +6,12 @@ After=network.target
 Type=simple
 User=pumpdash
 Group=dialout
-WorkingDirectory=/home/pmops/pump-test
+WorkingDirectory=/home/pmops/aquavar-vfd-monitor
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PUMP_DB=/dev/shm/pump.db
 Environment=PUMP_HOST=0.0.0.0
 Environment=PUMP_PORT=8080
-ExecStart=/usr/bin/python3 -B /home/pmops/pump-test/pump_dashboard.py
+ExecStart=/usr/bin/python3 -B /home/pmops/aquavar-vfd-monitor/pump_dashboard.py
 Restart=always
 RestartSec=5
 LimitCORE=0
@@ -19,8 +19,8 @@ LimitCORE=0
 # /var/log/journal is persistent on this box, so keep logs in tmpfs instead of
 # journald. Read failures are also recorded in the database and surfaced by
 # /api/latest.
-StandardOutput=append:/dev/shm/pump-dashboard.log
-StandardError=append:/dev/shm/pump-dashboard.log
+StandardOutput=append:/dev/shm/aquavar-vfd-monitor.log
+StandardError=append:/dev/shm/aquavar-vfd-monitor.log
 
 # Anything that ignores PRAGMA temp_store=MEMORY still gets a RAM-backed /tmp,
 # and the app can only write to tmpfs.

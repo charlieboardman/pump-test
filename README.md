@@ -6,9 +6,10 @@ Pi's SD card is never written to.  History is therefore volatile across reboots.
 
 ## Live dashboard
 
-Open the pump dashboard at https://vfdmonitor.tail0fe945.ts.net.
+[Open the pump dashboard](https://aquavar-vfd-monitor.tail0fe945.ts.net/)
 
-Running on a Raspberry Pi 3B+ and exposed over HTTPS using Tailscale Funnel.
+Running on a Raspberry Pi 3B+ (`aquavar-vfd-monitor`) and exposed over HTTPS using Tailscale Funnel.
+
 
 ![Aquavar pressure pump dashboard with current readings, history graph, and event log](docs/dashboard.png)
 
@@ -98,7 +99,7 @@ The script also adds the account to `dialout` if needed (for running the
 sampler by hand; the unit's `Group=` is sufficient for the service).
 
 The unit sets `PYTHONDONTWRITEBYTECODE=1`, disables core dumps, gives the
-service a private `/tmp`, and writes logs to `/dev/shm/pump-dashboard.log`
+service a private `/tmp`, and writes logs to `/dev/shm/aquavar-vfd-monitor.log`
 (RAM) rather than the SD card.
 
 Serving on `0.0.0.0:8080` is the whole deployment.  Reaching it from outside
@@ -108,15 +109,15 @@ part of this repository.
 ### Manual install
 
 If you would rather not use the script, create the system account first, edit
-the four machine-specific lines in `pump-dashboard.service`, then:
+the four machine-specific lines in `aquavar-vfd-monitor.service`, then:
 
 ```sh
 sudo useradd --system --no-create-home --home-dir /nonexistent \
     --shell /usr/sbin/nologin --groups dialout pumpdash
-sudo cp pump-dashboard.service /etc/systemd/system/
+sudo cp aquavar-vfd-monitor.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now pump-dashboard
-systemctl status pump-dashboard
+sudo systemctl enable --now aquavar-vfd-monitor
+systemctl status aquavar-vfd-monitor
 ```
 
 Without the dedicated system account, the database belongs to a login user and

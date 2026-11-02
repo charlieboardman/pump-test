@@ -291,7 +291,7 @@ def sampler(stop: threading.Event, ready: threading.Event) -> None:
     con = connect_writer()
     init_db(con)
     ready.set()
-    print(f"pump-dashboard: sampling into {DB_PATH}", flush=True)
+    print(f"aquavar-vfd-monitor: sampling into {DB_PATH}", flush=True)
 
     next_t = time.monotonic()
     last_maintenance = time.monotonic()
@@ -346,7 +346,7 @@ def sampler(stop: threading.Event, ready: threading.Event) -> None:
         maintain(con)
     finally:
         con.close()
-    print("pump-dashboard: sampler stopped", flush=True)
+    print("aquavar-vfd-monitor: sampler stopped", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -601,18 +601,18 @@ def main() -> None:
     server.daemon_threads = True
     server_thread = threading.Thread(target=server.serve_forever, name="http", daemon=True)
     server_thread.start()
-    print(f"pump-dashboard: http://{HOST}:{PORT}/", flush=True)
+    print(f"aquavar-vfd-monitor: http://{HOST}:{PORT}/", flush=True)
 
     while not stop.is_set():
         if not sampler_thread.is_alive() or not server_thread.is_alive():
-            print("pump-dashboard: worker thread died; exiting for restart", flush=True)
+            print("aquavar-vfd-monitor: worker thread died; exiting for restart", flush=True)
             break
         stop.wait(1.0)
 
     server.shutdown()
     server.server_close()
     sampler_thread.join(timeout=10)
-    print("pump-dashboard: stopped", flush=True)
+    print("aquavar-vfd-monitor: stopped", flush=True)
 
 
 if __name__ == "__main__":
