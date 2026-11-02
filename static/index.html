@@ -85,11 +85,11 @@
 
   <section class="chart-wrap">
     <div class="chart-head">
-      <span id="windowLabel">Loading…</span>
       <button id="downloadCsv" type="button">Download CSV</button>
       <button id="resetZoom" type="button">Back to now</button>
     </div>
     <div id="chart"></div>
+    <details class="chart-details"><summary>About this graph</summary><p id="windowLabel">Loading…</p></details>
   </section>
 </main>
 <details><summary>All readings</summary><table class="readings"><thead><tr><th>Signal</th><th>Value</th><th>Unit</th></tr></thead><tbody id="tiles"></tbody></table></details>
@@ -653,14 +653,10 @@
     const bucket = payload.bucket_ms >= 60000
       ? (payload.bucket_ms / 60000).toFixed(1) + " min"
       : (payload.bucket_ms / 1000).toFixed(0) + " s";
-    let filled = 0;
-    for (let i = 0; i < payload.t.length; i++) {
-      if (fields.some((key) => payload.series[key][i] != null)) filled++;
-    }
     windowEl.textContent =
-      new Date(payload.from).toLocaleString() + " → " + new Date(payload.to).toLocaleString() +
-      " · " + payload.t.length + " buckets · " + bucket + " each · " +
-      filled + " with data";
+      "Time range: " + new Date(payload.from).toLocaleString() + " to " +
+      new Date(payload.to).toLocaleString() + ". Readings are averaged over " +
+      bucket + " intervals. Gaps indicate no samples were recorded.";
   }
 
   function rebuildPlot() {
