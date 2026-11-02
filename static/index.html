@@ -51,6 +51,12 @@
   @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 700px) { body { margin: 10px; } main { grid-template-columns: 1fr; } .controls { border-right: 0; padding-right: 0; border-bottom: 1px solid #aaa; } #seriesList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; } .chart-head { flex-wrap: wrap; } }
   @media (max-width: 420px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .readings { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+  .readings th, .readings td { border: 1px solid #aaa; padding: 3px 8px; text-align: left; }
+  .readings th { background: #e5e5e5; }
+  .readings .v { font-family: "Courier New", monospace; text-align: right; font-weight: bold; }
+  .readings tr:nth-child(even) { background: #f5f5f5; }
+  #freshness.stale { color: #900; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -63,7 +69,7 @@
 </header>
 
 <section id="banner" class="banner"></section>
-<section class="tiles" id="tiles"></section>
+<h2>Current readings</h2><table class="readings"><thead><tr><th>Signal</th><th>Value</th><th>Unit</th></tr></thead><tbody id="tiles"></tbody></table><p id="freshness" role="status">Waiting for data</p>
 
 <main>
   <aside class="controls">
@@ -76,12 +82,14 @@
   <section class="chart-wrap">
     <div class="chart-head">
       <span id="windowLabel">Loading…</span>
+      <button id="downloadCsv" type="button">Download CSV</button>
       <button id="resetZoom" type="button">Back to now</button>
     </div>
     <div id="chart"></div>
   </section>
 </main>
 
+<section><h2>Faults and communications failures</h2><p>Selected time window; newest first (up to 500 events).</p><table class="readings"><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody id="events"></tbody></table></section>
 <footer>
   Scroll to zoom · shift-scroll or shift-drag to pan · range buttons set the
   starting window · double-click or “Back to now” returns to the latest data.
@@ -229,40 +237,51 @@
   function buildTiles() {
     const box = $("tiles");
     box.innerHTML = "";
-    TILE_KEYS.forEach((key) => {
-      const field = fieldByKey.get(key);
-      if (!field) return;
-      const tile = document.createElement("div");
-      tile.className = "tile";
-      tile.dataset.key = key;
-
-      const label = document.createElement("div");
-      label.className = "tile-label";
-      label.textContent = field.label;
-
-      const value = document.createElement("div");
-      value.className = "tile-value";
-      const number = document.createElement("span");
-      number.className = "v";
-      number.textContent = "—";
-      const unit = document.createElement("span");
-      unit.className = "u";
-      unit.textContent = field.unit === "process" ? "" : field.unit;
-      value.append(number, unit);
-
-      tile.append(label, value);
-      box.appendChild(tile);
+    meta.fields.forEach((field) => {
+      const row = document.createElement("tr");
+      row.className = "reading";
+      row.dataset.key = field.key;
+      for (const cls of ["label", "v", "u"]) {
+        const cell = document.createElement("td"); cell.className = cls; row.appendChild(cell);
+      }
+      row.querySelector(".label").textContent = field.label;
+      box.appendChild(row);
     });
   }
 
   function updateTiles(sample) {
-    document.querySelectorAll(".tile").forEach((tile) => {
-      const field = fieldByKey.get(tile.dataset.key);
-      if (!field) return;
-      const value = sample ? sample[field.key] : null;
-      tile.querySelector(".v").textContent = fmtNum(value);
-      tile.querySelector(".u").textContent = sample ? unitOf(field) : "";
+    document.querySelectorAll(".reading").forEach((row) => {
+      const field = fieldByKey.get(row.dataset.key);
+      row.querySelector(".v").textContent = fmtNum(sample ? sample[field.key] : null);
+      row.querySelector(".u").textContent = unitOf(field);
     });
+  }
+
+  let lastContact = 0;
+  let serverOffset = 0;
+  function freshness() {
+    const age = latest && latest.sample ? Math.max(0, Math.floor((Date.now() + serverOffset - latest.sample.ts) / 1000)) : null;
+    const stale = age === null || age > 5 || Date.now() - lastContact > 5000;
+    $("freshness").className = stale ? "stale" : "";
+    $("freshness").textContent = (stale ? "STALE DATA — " : "") + (age === null ? "No successful sample" : "Last successful read: " + age + " seconds ago") + (Date.now() - lastContact > 5000 ? "; dashboard connection unavailable" : "");
+  }
+
+  async function loadEvents(from, to) {
+    try {
+      const response = await fetch("/api/events?from=" + from + "&to=" + to);
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const payload = await response.json();
+      if (from !== currentFrom || to !== currentTo) return;
+      const box = $("events"); box.replaceChildren();
+      for (const event of payload.events) {
+        const row = document.createElement("tr");
+        for (const value of [new Date(event.ts).toLocaleString(), event.message]) {
+          const cell = document.createElement("td"); cell.textContent = value; row.appendChild(cell);
+        }
+        box.appendChild(row);
+      }
+      if (!payload.events.length) box.textContent = "No faults or communications failures in this window.";
+    } catch (err) { $("events").textContent = "Event log unavailable: " + err.message; }
   }
 
   function updateStatus(data) {
@@ -581,6 +600,7 @@
   }
 
   async function loadSeries(from, to) {
+    loadEvents(from, to);
     const fields = Array.from(selected);
     if (!fields.length) {
       if (plot) {
@@ -656,6 +676,8 @@
       const response = await fetch("/api/latest");
       if (!response.ok) throw new Error("HTTP " + response.status);
       latest = await response.json();
+      lastContact = Date.now();
+      serverOffset = latest.now - Date.now();
       updateStatus(latest);
     } catch (err) {
       statusEl.textContent = "offline";
@@ -665,6 +687,10 @@
 
   async function init() {
     buildRanges();
+    setInterval(freshness, 1000);
+    $("downloadCsv").addEventListener("click", () => {
+      window.location.href = "/api/export.csv?from=" + currentFrom + "&to=" + currentTo;
+    });
     chartEl.addEventListener("mousedown", onChartMouseDown, true);
 
     try {

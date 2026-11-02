@@ -438,6 +438,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(self._latest())
             elif path == "/api/series":
                 self._send_json(self._series(query))
+            elif path == "/api/events":
+                self._send_json(self._events(query))
+            elif path == "/api/export.csv":
+                self._csv(query)
             elif path == "/api/errors":
                 self._send_json(self._errors(query))
             else:
@@ -495,6 +499,68 @@ class Handler(BaseHTTPRequestHandler):
         con = connect_reader()
         try:
             return series_payload(con, from_ms, to_ms, fields)
+        finally:
+            con.close()
+
+    def _events(self, query: dict) -> dict:
+        now = int(time.time() * 1000)
+        end = min(_int_arg(query, "to", now), now)
+        start = max(_int_arg(query, "from", end - 86400000), now - RETENTION_MS)
+        con = connect_reader()
+        try:
+            # Compare adjacent retained samples before filtering the window so
+            # a continuing fault is not reported as a new fault at its boundary.
+            faults = con.execute("""
+                WITH changes AS (
+                  SELECT ts, faults_active, fault_last, fault_last_name,
+                    LAG(faults_active) OVER (ORDER BY ts) AS prev_active,
+                    LAG(fault_last) OVER (ORDER BY ts) AS prev_last
+                  FROM samples
+                )
+                SELECT * FROM changes WHERE ts >= ? AND ts < ? AND
+                  ((faults_active != '[]' AND (prev_active IS NULL OR faults_active != prev_active))
+                   OR (fault_last > 0 AND prev_last IS NOT NULL AND fault_last != prev_last))
+                ORDER BY ts DESC LIMIT 500
+            """, (start, end)).fetchall()
+            events = [{"ts": row["ts"], "message": "Fault observed: " +
+                       (row["faults_active"] if row["faults_active"] != '[]' else row["fault_last_name"])}
+                      for row in faults]
+            events.extend({"ts": row["ts"], "message": "Communications failure: " + row["error"]}
+                          for row in con.execute(
+                              "SELECT ts, error FROM read_errors WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT 500",
+                              (start, end)))
+            return {"events": sorted(events, key=lambda e: e["ts"], reverse=True)[:500]}
+        finally:
+            con.close()
+
+    def _csv(self, query: dict) -> None:
+        import csv
+        import io
+        now = int(time.time() * 1000)
+        end = min(_int_arg(query, "to", now), now)
+        start = max(_int_arg(query, "from", end - 86400000), now - RETENTION_MS)
+        con = connect_reader()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="pump-readings.csv"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(SAMPLE_COLUMNS)
+            self.wfile.write(buf.getvalue().encode())
+            cursor = con.execute("SELECT * FROM samples WHERE ts >= ? AND ts < ? ORDER BY ts", (start, end))
+            while True:
+                rows = cursor.fetchmany(1000)
+                if not rows:
+                    break
+                buf.seek(0)
+                buf.truncate()
+                writer.writerows([row[key] for key in SAMPLE_COLUMNS] for row in rows)
+                self.wfile.write(buf.getvalue().encode())
         finally:
             con.close()
 
