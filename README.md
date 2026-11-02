@@ -1,14 +1,14 @@
 # Aquavar CPC dashboard
 
-One Python process that samples the VFD at 1 Hz and serves a zoomable uPlot
+One Python process that samples the VFD of the pressure pump at Proyecto Inocencio Casa Hogar at 1 Hz and serves a zoomable uPlot
 dashboard.  History is stored in SQLite on tmpfs (`/dev/shm/pump.db`), so the
 Pi's SD card is never written to.  History is therefore volatile across reboots.
 
 ## Live dashboard
 
-[Open the pump dashboard](https://vfdmonitor.tail0fe945.ts.net/)
+Open the pump dashboard at https://vfdmonitor.tail0fe945.ts.net.
 
-Hosted on `vfdmonitor` and exposed over HTTPS using Tailscale Funnel.
+Running on a Raspberry Pi 3B+ and exposed over HTTPS using Tailscale Funnel.
 
 ![Aquavar pressure pump dashboard with current readings, history graph, and event log](docs/dashboard.png)
 
