@@ -4,6 +4,14 @@ One Python process that samples the VFD at 1 Hz and serves a zoomable uPlot
 dashboard.  History is stored in SQLite on tmpfs (`/dev/shm/pump.db`), so the
 Pi's SD card is never written to.  History is therefore volatile across reboots.
 
+## Live dashboard
+
+[Open the pump dashboard](https://vfdmonitor.tail0fe945.ts.net/)
+
+Hosted on `vfdmonitor` and exposed over HTTPS using Tailscale Funnel.
+
+![Aquavar pressure pump dashboard with current readings, history graph, and event log](docs/dashboard.png)
+
 ## How it fits together
 
 ```
