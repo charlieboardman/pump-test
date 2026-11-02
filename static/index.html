@@ -6,117 +6,51 @@
 <title>Aquavar Pump Dashboard</title>
 <link rel="stylesheet" href="/static/uplot.min.css">
 <style>
-  :root {
-    --bg: #0b1220;
-    --panel: #121c30;
-    --panel-2: #17233c;
-    --border: #24324d;
-    --text: #e2e8f0;
-    --muted: #94a3b8;
-    --accent: #3b82f6;
-    --green: #22c55e;
-    --amber: #f59e0b;
-    --red: #ef4444;
-  }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--text); }
-  body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: 14px;
-    line-height: 1.4;
-    padding: 16px 20px 32px;
-  }
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
-  }
-  h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: .2px; }
-  .muted { color: var(--muted); }
-  #updated { font-size: 12px; margin-left: 10px; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 6px 14px; border-radius: 999px; font-size: 13px;
-    font-weight: 600; text-transform: capitalize;
-    background: #1e293b; border: 1px solid var(--border); color: var(--muted);
-  }
-  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-  .pill.running { color: var(--green); border-color: rgba(34,197,94,.4); background: rgba(34,197,94,.08); }
-  .pill.stopped { color: var(--muted); }
-  .pill.fault { color: var(--red); border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.1); }
-  .pill.alarm { color: var(--amber); border-color: rgba(245,158,11,.45); background: rgba(245,158,11,.1); }
-  .pill.idle { color: #60a5fa; }
-
-  .banner {
-    display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 10px;
-    border: 1px solid var(--border); background: var(--panel); font-weight: 550;
-  }
+  :root { color-scheme: light; }
+  body { margin: 20px; background: #fff; color: #111; font: 14px Arial, Helvetica, sans-serif; line-height: 1.4; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 3px double #777; padding-bottom: 10px; margin-bottom: 16px; }
+  h1 { font: bold 26px "Times New Roman", serif; margin: 0 0 3px; }
+  h2 { font: bold 16px "Times New Roman", serif; margin: 0 0 8px; }
+  .muted, footer { color: #555; }
+  #updated { font: 12px "Courier New", monospace; }
+  .pill { border: 1px solid #777; padding: 4px 10px; background: #eee; font: bold 13px "Courier New", monospace; text-transform: uppercase; white-space: nowrap; }
+  .pill.running { color: #075b20; background: #e8f3e8; }
+  .pill.fault { color: #900; background: #ffe8e8; }
+  .pill.alarm { color: #704000; background: #fff3ce; }
+  .banner { display: none; border: 2px solid #900; padding: 8px; margin-bottom: 12px; color: #900; background: #fff0f0; }
   .banner.show { display: block; }
-  .banner.fault { border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.1); color: #fecaca; }
-  .banner.alarm { border-color: rgba(245,158,11,.5); background: rgba(245,158,11,.1); color: #fde68a; }
-
-  .tiles {
-    display: grid; gap: 10px; margin-bottom: 14px;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  }
-  .tile {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px 12px; min-width: 0;
-  }
-  .tile-label { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tile-value { display: flex; align-items: baseline; gap: 5px; margin-top: 2px; }
-  .tile-value .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .tile-value .u { color: var(--muted); font-size: 12px; }
-
-  main { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; align-items: start; }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
-
-  .controls {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 12px; position: sticky; top: 12px; max-height: calc(100vh - 40px); overflow: auto;
-  }
-  .ranges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-  .ranges button {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 7px; padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
-  }
-  .ranges button:hover { border-color: #3b4a68; }
-  .ranges button.active { background: var(--accent); border-color: var(--accent); color: white; }
-
-  .group { margin-bottom: 12px; }
-  .group-title {
-    color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .7px; margin-bottom: 5px;
-  }
-  .series-item {
-    display: flex; align-items: center; gap: 8px; padding: 3px 2px;
-    cursor: pointer; border-radius: 5px; user-select: none;
-  }
-  .series-item:hover { background: rgba(148,163,184,.08); }
-  .series-item input { accent-color: var(--accent); margin: 0; cursor: pointer; }
-  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-  .series-item span:last-child { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .chart-wrap {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 12px 12px 6px; min-width: 0;
-  }
-  .chart-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    margin-bottom: 6px; flex-wrap: wrap;
-  }
-  #windowLabel { color: var(--muted); font-size: 12px; }
-  #resetZoom {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 7px; padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
-  }
-  #resetZoom:hover { border-color: #3b4a68; }
-  #chart { width: 100%; min-height: 460px; }
+  .banner.alarm { border-color: #805000; color: #704000; background: #fff3ce; }
+  .tiles { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); border-top: 1px solid #888; border-left: 1px solid #888; margin-bottom: 18px; }
+  .tile { border-right: 1px solid #888; border-bottom: 1px solid #888; min-width: 0; }
+  .tile-label { background: #e5e5e5; border-bottom: 1px solid #aaa; padding: 4px 7px; font-size: 12px; }
+  .tile-value { padding: 6px 7px; display: flex; gap: 5px; align-items: baseline; flex-wrap: wrap; }
+  .tile-value .v { font: bold 21px "Courier New", monospace; font-variant-numeric: tabular-nums; }
+  .tile-value .u { font-size: 12px; color: #555; }
+  main { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .controls { padding-right: 16px; border-right: 1px solid #aaa; }
+  .ranges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; }
+  button { font: 12px Arial, sans-serif; color: #111; background: #e5e5e5; border: 2px outset #ddd; border-radius: 0; padding: 3px 8px; cursor: pointer; }
+  button:active, .ranges button.active { border-style: inset; background: #ccc; font-weight: bold; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #000080; outline-offset: 2px; }
+  .group { margin-bottom: 14px; }
+  .group-title { font-weight: bold; border-bottom: 1px solid #aaa; margin-bottom: 4px; }
+  .series-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+  .series-item:hover { background: #eee; }
+  .series-item input { margin: 0; accent-color: #000080; }
+  .swatch { width: 9px; height: 9px; flex: none; border: 1px solid #666; }
+  .chart-wrap { min-width: 0; }
+  .chart-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid #999; background: #eee; margin-bottom: 10px; }
+  #windowLabel { font: 12px "Courier New", monospace; }
+  #chart { min-height: 460px; }
   #chart .u-over { cursor: crosshair; }
   #chart .u-over.panning { cursor: grabbing; }
-  .u-legend { font-size: 12px; }
-  .u-legend .u-marker { border-radius: 2px; }
-  footer { color: var(--muted); font-size: 11px; margin-top: 14px; }
+  .u-legend { font: 12px Arial, sans-serif; }
+  footer { border-top: 1px solid #888; margin-top: 18px; padding-top: 8px; font-size: 12px; }
   .hidden { display: none !important; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (max-width: 700px) { body { margin: 10px; } main { grid-template-columns: 1fr; } .controls { border-right: 0; padding-right: 0; border-bottom: 1px solid #aaa; } #seriesList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; } .chart-head { flex-wrap: wrap; } }
+  @media (max-width: 420px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
 </head>
 <body>
@@ -133,7 +67,9 @@
 
 <main>
   <aside class="controls">
+    <h2>History range</h2>
     <div class="ranges" id="ranges"></div>
+    <h2>Plot signals</h2>
     <div id="seriesList"></div>
   </aside>
 
@@ -389,10 +325,10 @@
     });
 
     const axes = [{
-      stroke: "#94a3b8",
-      grid: { stroke: "rgba(148,163,184,0.12)" },
-      ticks: { stroke: "rgba(148,163,184,0.3)" },
-      font: "11px system-ui, sans-serif",
+      stroke: "#444444",
+      grid: { stroke: "#dddddd" },
+      ticks: { stroke: "#aaaaaa" },
+      font: "11px Arial, sans-serif",
     }];
 
     units.forEach((unit, index) => {
@@ -403,10 +339,10 @@
         labelSize: 18,
         size: 60,
         space: 55,
-        stroke: "#94a3b8",
-        grid: { show: index === 0, stroke: "rgba(148,163,184,0.12)" },
-        ticks: { stroke: "rgba(148,163,184,0.3)" },
-        font: "11px system-ui, sans-serif",
+        stroke: "#444444",
+        grid: { show: index === 0, stroke: "#dddddd" },
+        ticks: { stroke: "#aaaaaa" },
+        font: "11px Arial, sans-serif",
       });
     });
 
