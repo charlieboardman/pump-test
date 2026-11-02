@@ -595,8 +595,10 @@
         : 1;
 
     if (horizontal) {
-      const deltaPx = (event.deltaX || event.deltaY) * unit;
-      panBy(deltaPx * ((max - min) / rect.width));
+      const rawDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.deltaY;
+      panBy(rawDelta * unit * ((max - min) / rect.width));
       return;
     }
 

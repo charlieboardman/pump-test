@@ -121,7 +121,11 @@ logind may delete it from `/dev/shm` when that user's last session ends.
   to zoom into a selection.  The visible window is re-fetched after a short
   debounce with a bucket size matched to the zoom
   (`max(1 s, window / 1500)`, rounded up to a readable interval).
-- Double-click or **Reset zoom** returns to the selected range button.
+- Shift-scroll (or a horizontal trackpad swipe) and shift-drag pan left and
+  right through history.  Panning stops the 10 s live refresh, so the window
+  stays where you put it instead of snapping back to the newest data.
+- Double-click or **Back to now** returns to the selected range button and
+  resumes live updates.
 - Check any combination of measurements; each unit gets its own y-axis.
 - **Running** is stored per sample (0 or 100) from the decoded status summary;
   at 1 s buckets it is 0/100, and when zoomed out it is the percentage of each
