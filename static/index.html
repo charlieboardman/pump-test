@@ -57,6 +57,9 @@
   .readings .v { font-family: "Courier New", monospace; text-align: right; font-weight: bold; }
   .readings tr:nth-child(even) { background: #f5f5f5; }
   #freshness.stale { color: #900; font-weight: bold; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; font-weight: bold; margin-bottom: 8px; }
+  #freshness { margin: -8px 0 12px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -69,7 +72,8 @@
 </header>
 
 <section id="banner" class="banner"></section>
-<h2>Current readings</h2><table class="readings"><thead><tr><th>Signal</th><th>Value</th><th>Unit</th></tr></thead><tbody id="tiles"></tbody></table><p id="freshness" role="status">Waiting for data</p>
+<div class="tiles" id="summaryReadings" aria-label="Current readings"></div>
+<p id="freshness" role="status">Waiting for data</p>
 
 <main>
   <aside class="controls">
@@ -88,6 +92,7 @@
     <div id="chart"></div>
   </section>
 </main>
+<details><summary>All readings</summary><table class="readings"><thead><tr><th>Signal</th><th>Value</th><th>Unit</th></tr></thead><tbody id="tiles"></tbody></table></details>
 
 <section><h2>Faults and communications failures</h2><p>Selected time window; newest first (up to 500 events).</p><table class="readings"><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody id="events"></tbody></table></section>
 <footer>
@@ -111,7 +116,7 @@
   ];
   const TILE_KEYS = [
     "pressure", "setpoint", "motor_freq_hz", "motor_current_a",
-    "motor_power_kw", "dc_bus_v", "drive_temp_c", "energy_kwh",
+    "motor_voltage_v", "motor_power_kw", "dc_bus_v", "drive_temp_c",
   ];
   const MIN_SPAN_MS = 5 * 1000;        // don't zoom in past a few samples
   const MAX_SPAN_MS = 7 * 86400e3;     // matches server retention
@@ -237,6 +242,18 @@
   function buildTiles() {
     const box = $("tiles");
     box.innerHTML = "";
+    const summary = $("summaryReadings");
+    summary.replaceChildren();
+    TILE_KEYS.forEach((key) => {
+      const field = fieldByKey.get(key);
+      if (!field) return;
+      const tile = document.createElement("div");
+      tile.className = "tile reading"; tile.dataset.key = key;
+      const label = document.createElement("div"); label.className = "tile-label"; label.textContent = field.label;
+      const value = document.createElement("div"); value.className = "tile-value";
+      for (const cls of ["v", "u"]) { const span = document.createElement("span"); span.className = cls; value.appendChild(span); }
+      tile.append(label, value); summary.appendChild(tile);
+    });
     meta.fields.forEach((field) => {
       const row = document.createElement("tr");
       row.className = "reading";
