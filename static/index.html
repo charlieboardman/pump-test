@@ -137,7 +137,7 @@
   let plotKey = "";
   let currentFrom = 0;
   let currentTo = 0;
-  let activeRange = "24h";
+  let activeRange = "1h";
   let zoomed = false;
   let windowTimer = null;
   let fetchSeq = 0;
@@ -723,7 +723,7 @@
     buildSeriesList();
     buildTiles();
     await refreshLatest();
-    setRange("24h");
+    setRange("1h");
 
     $("resetZoom").addEventListener("click", () => setRange(activeRange));
 
