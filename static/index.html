@@ -111,6 +111,8 @@
   }
   #resetZoom:hover { border-color: #3b4a68; }
   #chart { width: 100%; min-height: 460px; }
+  #chart .u-over { cursor: crosshair; }
+  #chart .u-over.panning { cursor: grabbing; }
   .u-legend { font-size: 12px; }
   .u-legend .u-marker { border-radius: 2px; }
   footer { color: var(--muted); font-size: 11px; margin-top: 14px; }
@@ -138,15 +140,15 @@
   <section class="chart-wrap">
     <div class="chart-head">
       <span id="windowLabel">Loading…</span>
-      <button id="resetZoom" type="button">Reset zoom</button>
+      <button id="resetZoom" type="button">Back to now</button>
     </div>
     <div id="chart"></div>
   </section>
 </main>
 
 <footer>
-  Scroll or drag to zoom · range buttons set the starting window ·
-  double-click or “Reset zoom” to return.
+  Scroll to zoom · shift-scroll or shift-drag to pan · range buttons set the
+  starting window · double-click or “Back to now” returns to the latest data.
   Data is sampled at 1 Hz and kept in RAM for 7 days (cleared on reboot).
 </footer>
 
@@ -169,7 +171,7 @@
   ];
   const MIN_SPAN_MS = 5 * 1000;        // don't zoom in past a few samples
   const MAX_SPAN_MS = 7 * 86400e3;     // matches server retention
-  const ZOOM_DEBOUNCE_MS = 200;        // refetch after the wheel settles
+  const WINDOW_DEBOUNCE_MS = 200;      // refetch after the gesture settles
 
   const $ = (id) => document.getElementById(id);
   const chartEl = $("chart");
@@ -188,11 +190,12 @@
   let currentTo = 0;
   let activeRange = "24h";
   let zoomed = false;
-  let zoomTimer = null;
+  let windowTimer = null;
   let fetchSeq = 0;
   let resizeObserver = null;
   let downX = null;
   let downY = null;
+  let panDrag = null;
 
   function fmtNum(value) {
     if (value === null || value === undefined || Number.isNaN(value)) return "—";
@@ -494,9 +497,80 @@
       const max = plot.scales.x.max;
       if (!Number.isFinite(min) || !Number.isFinite(max)) return;
       if (Math.abs(min - currentFrom / 1000) > 0.5 || Math.abs(max - currentTo / 1000) > 0.5) {
-        scheduleZoom(min, max);
+        scheduleWindow(min, max);
       }
     });
+  }
+
+  // Keep the window inside the server's retention range.
+  function clampXWindow(min, max) {
+    const span = max - min;
+    const now = Date.now() / 1000;
+    const earliest = now - MAX_SPAN_MS / 1000;
+    if (span >= MAX_SPAN_MS / 1000) return [earliest, now];
+    if (min < earliest) {
+      min = earliest;
+      max = earliest + span;
+    }
+    if (max > now) {
+      max = now;
+      min = now - span;
+    }
+    return [min, max];
+  }
+
+  function panBy(seconds) {
+    if (!plot) return;
+    const scale = plot.scales.x;
+    if (!Number.isFinite(scale.min) || !Number.isFinite(scale.max)) return;
+    const [min, max] = clampXWindow(scale.min + seconds, scale.max + seconds);
+    if (max <= min) return;
+    if (Math.abs(min - scale.min) < 1e-6 && Math.abs(max - scale.max) < 1e-6) return;
+    plot.setScale("x", { min: min, max: max });
+    scheduleWindow(min, max);
+  }
+
+  function onChartMouseDown(event) {
+    if (!plot || event.button !== 0 || !event.shiftKey) return;
+    if (!plot.over.contains(event.target)) return;
+
+    const scale = plot.scales.x;
+    if (!Number.isFinite(scale.min) || !Number.isFinite(scale.max) || scale.max <= scale.min) return;
+    const rect = plot.over.getBoundingClientRect();
+    if (rect.width <= 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    downX = null;
+    downY = null;
+    panDrag = { startX: event.clientX, min: scale.min, max: scale.max, width: rect.width };
+    plot.over.classList.add("panning");
+    document.addEventListener("mousemove", onPanMove);
+    document.addEventListener("mouseup", onPanEnd);
+  }
+
+  function onPanMove(event) {
+    if (!panDrag || !plot) return;
+    const dx = event.clientX - panDrag.startX;
+    const span = panDrag.max - panDrag.min;
+    const shift = -dx * (span / panDrag.width);
+    const [min, max] = clampXWindow(panDrag.min + shift, panDrag.max + shift);
+    if (max > min) plot.setScale("x", { min: min, max: max });
+  }
+
+  function onPanEnd() {
+    document.removeEventListener("mousemove", onPanMove);
+    document.removeEventListener("mouseup", onPanEnd);
+    if (!panDrag) return;
+    const drag = panDrag;
+    panDrag = null;
+    if (!plot) return;
+    plot.over.classList.remove("panning");
+
+    const scale = plot.scales.x;
+    if (!Number.isFinite(scale.min) || !Number.isFinite(scale.max) || scale.max <= scale.min) return;
+    if (Math.abs(scale.min - drag.min) < 1e-6 && Math.abs(scale.max - drag.max) < 1e-6) return;
+    scheduleWindow(scale.min, scale.max);
   }
 
   function onWheel(event) {
@@ -510,12 +584,26 @@
 
     const rect = plot.over.getBoundingClientRect();
     if (rect.width <= 0) return;
+
+    // A horizontal trackpad swipe, or shift+wheel, pans instead of zooming.
+    const horizontal = event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    // deltaMode 1 is lines (Firefox), 2 is pages; normalise to pixels.
+    const unit = event.deltaMode === 1
+      ? 16
+      : event.deltaMode === 2
+        ? (horizontal ? rect.width : rect.height)
+        : 1;
+
+    if (horizontal) {
+      const deltaPx = (event.deltaX || event.deltaY) * unit;
+      panBy(deltaPx * ((max - min) / rect.width));
+      return;
+    }
+
     const px = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
     const anchor = plot.posToVal(px, "x");
     if (!Number.isFinite(anchor)) return;
 
-    // deltaMode 1 is lines (Firefox), 2 is pages; normalise to pixels.
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
     const delta = event.deltaY * unit;
     const factor = Math.exp(delta * 0.0015);
     const span = max - min;
@@ -524,28 +612,17 @@
       MAX_SPAN_MS / 1000
     );
     const ratio = (anchor - min) / span;
-
-    let newMin = anchor - ratio * newSpan;
-    let newMax = newMin + newSpan;
-
-    // Keep the window inside the server's retention range.
-    const now = Date.now() / 1000;
-    const earliest = now - MAX_SPAN_MS / 1000;
-    if (newMin < earliest) {
-      newMin = earliest;
-      newMax = earliest + newSpan;
-    }
-    if (newMax > now) {
-      newMax = now;
-      newMin = now - newSpan;
-    }
-    if (newMin < earliest || newMax - newMin < MIN_SPAN_MS / 1000) return;
+    const [newMin, newMax] = clampXWindow(
+      anchor - ratio * newSpan,
+      anchor - ratio * newSpan + newSpan
+    );
+    if (newMax - newMin < MIN_SPAN_MS / 1000) return;
 
     plot.setScale("x", { min: newMin, max: newMax });
-    scheduleZoom(newMin, newMax);
+    scheduleWindow(newMin, newMax);
   }
 
-  function scheduleZoom(min, max) {
+  function scheduleWindow(min, max) {
     const from = Math.round(min * 1000);
     const to = Math.round(max * 1000);
     if (to - from < MIN_SPAN_MS) {
@@ -559,10 +636,10 @@
     // chart back to the previous window while the refetch is debounced.
     currentFrom = from;
     currentTo = to;
-    clearTimeout(zoomTimer);
-    zoomTimer = setTimeout(() => {
+    clearTimeout(windowTimer);
+    windowTimer = setTimeout(() => {
       loadSeries(currentFrom, currentTo);
-    }, ZOOM_DEBOUNCE_MS);
+    }, WINDOW_DEBOUNCE_MS);
   }
 
   async function loadSeries(from, to) {
@@ -592,6 +669,10 @@
     }
     if (seq !== fetchSeq) return;
 
+    // The server clamps to retention and "now"; use its answer so the scale
+    // and the label always describe the data we actually received.
+    currentFrom = payload.from;
+    currentTo = payload.to;
     renderSeries(payload, fields);
 
     const bucket = payload.bucket_ms >= 60000
@@ -602,13 +683,13 @@
       if (fields.some((key) => payload.series[key][i] != null)) filled++;
     }
     windowEl.textContent =
-      new Date(from).toLocaleString() + " → " + new Date(to).toLocaleString() +
+      new Date(payload.from).toLocaleString() + " → " + new Date(payload.to).toLocaleString() +
       " · " + payload.t.length + " buckets · " + bucket + " each · " +
       filled + " with data";
   }
 
   function rebuildPlot() {
-    clearTimeout(zoomTimer);
+    clearTimeout(windowTimer);
     if (plot) {
       plot.destroy();
       plot = null;
@@ -620,7 +701,7 @@
   function setRange(id) {
     const range = RANGES.find((item) => item.id === id);
     if (!range) return;
-    clearTimeout(zoomTimer);
+    clearTimeout(windowTimer);
     activeRange = id;
     zoomed = false;
     const to = Date.now();
@@ -646,6 +727,7 @@
 
   async function init() {
     buildRanges();
+    chartEl.addEventListener("mousedown", onChartMouseDown, true);
 
     try {
       const response = await fetch("/api/meta");
