@@ -89,7 +89,7 @@
       <button id="resetZoom" type="button">Back to now</button>
     </div>
     <div id="chart"></div>
-    <section><h2>Faults and communications failures</h2><p>Selected time window; newest first (up to 500 events).</p><table class="readings"><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody id="events"></tbody></table></section>
+    <section><h2>Faults and communications failures</h2><p>Latest 100 events; newest first. Independent of graph range.</p><table class="readings"><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody id="events"></tbody></table></section>
     <details class="chart-details"><summary>About this graph</summary><p id="windowLabel">Loading…</p></details>
   </section>
 </main>
@@ -284,21 +284,20 @@
     $("freshness").textContent = (stale ? "STALE DATA — " : "") + (age === null ? "No successful sample" : "Last successful read: " + age + " seconds ago") + (Date.now() - lastContact > 5000 ? "; dashboard connection unavailable" : "");
   }
 
-  async function loadEvents(from, to) {
+  async function loadEvents() {
     try {
-      const response = await fetch("/api/events?from=" + from + "&to=" + to);
+      const response = await fetch("/api/events?limit=100");
       if (!response.ok) throw new Error("HTTP " + response.status);
       const payload = await response.json();
-      if (from !== currentFrom || to !== currentTo) return;
       const box = $("events"); box.replaceChildren();
       for (const event of payload.events) {
         const row = document.createElement("tr");
-        for (const value of [new Date(event.ts).toLocaleString(), event.message]) {
+        for (const value of [new Date(event.ts).toLocaleString(), event.source + " / " + event.transition + ": " + event.message]) {
           const cell = document.createElement("td"); cell.textContent = value; row.appendChild(cell);
         }
         box.appendChild(row);
       }
-      if (!payload.events.length) box.textContent = "No faults or communications failures in this window.";
+      if (!payload.events.length) box.textContent = "No alarm events recorded.";
     } catch (err) { $("events").textContent = "Event log unavailable: " + err.message; }
   }
 
@@ -618,7 +617,6 @@
   }
 
   async function loadSeries(from, to) {
-    loadEvents(from, to);
     const fields = Array.from(selected);
     if (!fields.length) {
       if (plot) {
@@ -728,6 +726,8 @@
 
     $("resetZoom").addEventListener("click", () => setRange(activeRange));
 
+    loadEvents();
+    setInterval(loadEvents, 5000);
     setInterval(refreshLatest, 2000);
 
     setInterval(() => {

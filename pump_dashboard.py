@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import read_pump
-from alarm_logic.leak import evaluate as evaluate_leak
+from alarm_logic.events import initialize as initialize_events, record as record_events
 
 DB_PATH = os.environ.get("PUMP_DB", "/dev/shm/pump.db")
 HOST = os.environ.get("PUMP_HOST", "0.0.0.0")
@@ -179,11 +179,13 @@ def init_db(con: sqlite3.Connection) -> None:
         con.execute("DROP TABLE IF EXISTS samples")
         con.execute("DROP TABLE IF EXISTS read_errors")
     con.executescript(SCHEMA_SQL)
+    initialize_events(con)
     con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     con.commit()
 
 
 def maintain(con: sqlite3.Connection) -> None:
+    con.execute("DELETE FROM alarm_events WHERE id NOT IN (SELECT id FROM alarm_events ORDER BY id DESC LIMIT 10000)")
     cutoff = int(time.time() * 1000) - RETENTION_MS
     con.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
     con.execute("DELETE FROM read_errors WHERE ts < ?", (cutoff,))
@@ -306,7 +308,9 @@ def sampler(stop: threading.Event, ready: threading.Event) -> None:
                 timeout=SAMPLE_TIMEOUT,
                 retries=SAMPLE_RETRIES,
             )
-            con.execute(INSERT_SQL, build_row(sample, int(started * 1000)))
+            row = build_row(sample, int(started * 1000))
+            con.execute(INSERT_SQL, row)
+            record_events(con, int(started * 1000), sample=dict(zip(SAMPLE_COLUMNS, row)))
             con.commit()
             consecutive = 0
         except Exception as exc:  # keep the 1 Hz grid alive through any failure
@@ -318,6 +322,7 @@ def sampler(stop: threading.Event, ready: threading.Event) -> None:
                     "VALUES (?, ?, ?)",
                     (int(started * 1000), message, consecutive),
                 )
+                record_events(con, int(started * 1000), error=message)
                 con.commit()
             except Exception:
                 pass
@@ -504,49 +509,13 @@ class Handler(BaseHTTPRequestHandler):
             con.close()
 
     def _events(self, query: dict) -> dict:
-        now = int(time.time() * 1000)
-        end = min(_int_arg(query, "to", now), now)
-        start = max(_int_arg(query, "from", end - 86400000), now - RETENTION_MS)
+        limit = max(1, min(_int_arg(query, "limit", 100), 500))
         con = connect_reader()
         try:
-            # Compare adjacent retained samples before filtering the window so
-            # a continuing fault is not reported as a new fault at its boundary.
-            faults = con.execute("""
-                WITH changes AS (
-                  SELECT ts, faults_active, fault_last, fault_last_name,
-                    LAG(faults_active) OVER (ORDER BY ts) AS prev_active,
-                    LAG(fault_last) OVER (ORDER BY ts) AS prev_last
-                  FROM samples
-                )
-                SELECT * FROM changes WHERE ts >= ? AND ts < ? AND
-                  ((faults_active != '[]' AND (prev_active IS NULL OR faults_active != prev_active))
-                   OR (fault_last > 0 AND prev_last IS NOT NULL AND fault_last != prev_last))
-                ORDER BY ts DESC LIMIT 500
-            """, (start, end)).fetchall()
-            events = [{"ts": row["ts"], "message": "Fault observed: " +
-                       (row["faults_active"] if row["faults_active"] != '[]' else row["fault_last_name"])}
-                      for row in faults]
-            events.extend({"ts": row["ts"], "message": "Communications failure: " + row["error"]}
-                          for row in con.execute(
-                              "SELECT ts, error FROM read_errors WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT 500",
-                              (start, end)))
-            from datetime import datetime, timedelta, time as wall_time
-            # Naive local datetimes use the host timezone, including DST rules.
-            today = datetime.fromtimestamp(now / 1000).date()
-            for offset in range(int(RETENTION_DAYS) + 2):
-                day = today - timedelta(days=offset)
-                window_end = int(datetime.combine(day, wall_time(4)).timestamp() * 1000)
-                if not start <= window_end < end:
-                    continue
-                window_start = int(datetime.combine(day, wall_time(2)).timestamp() * 1000)
-                readings = con.execute(
-                    "SELECT ts, motor_freq_hz FROM samples WHERE ts >= ? AND ts < ? ORDER BY ts",
-                    (window_start, window_end)).fetchall()
-                result = evaluate_leak([dict(r) for r in readings], day, None, now)
-                if result["state"] in ("raised", "unknown"):
-                    events.append({"ts": window_end, "message": "Local rule — " + result["code"] +
-                                   ": " + result["message"]})
-            return {"events": sorted(events, key=lambda e: e["ts"], reverse=True)[:500]}
+            rows = con.execute(
+                "SELECT ts,source,code,transition,message FROM alarm_events ORDER BY id DESC LIMIT ?",
+                (limit,)).fetchall()
+            return {"events": [dict(row) for row in rows]}
         finally:
             con.close()
 
