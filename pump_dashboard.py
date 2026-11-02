@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import read_pump
+from alarm_logic.leak import evaluate as evaluate_leak
 
 DB_PATH = os.environ.get("PUMP_DB", "/dev/shm/pump.db")
 HOST = os.environ.get("PUMP_HOST", "0.0.0.0")
@@ -529,6 +530,22 @@ class Handler(BaseHTTPRequestHandler):
                           for row in con.execute(
                               "SELECT ts, error FROM read_errors WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT 500",
                               (start, end)))
+            from datetime import datetime, timedelta, time as wall_time
+            # Naive local datetimes use the host timezone, including DST rules.
+            today = datetime.fromtimestamp(now / 1000).date()
+            for offset in range(int(RETENTION_DAYS) + 2):
+                day = today - timedelta(days=offset)
+                window_end = int(datetime.combine(day, wall_time(4)).timestamp() * 1000)
+                if not start <= window_end < end:
+                    continue
+                window_start = int(datetime.combine(day, wall_time(2)).timestamp() * 1000)
+                readings = con.execute(
+                    "SELECT ts, motor_freq_hz FROM samples WHERE ts >= ? AND ts < ? ORDER BY ts",
+                    (window_start, window_end)).fetchall()
+                result = evaluate_leak([dict(r) for r in readings], day, None, now)
+                if result["state"] in ("raised", "unknown"):
+                    events.append({"ts": window_end, "message": "Local rule — " + result["code"] +
+                                   ": " + result["message"]})
             return {"events": sorted(events, key=lambda e: e["ts"], reverse=True)[:500]}
         finally:
             con.close()
