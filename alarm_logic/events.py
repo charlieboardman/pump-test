@@ -42,10 +42,6 @@ def record(con, ts, sample=None, error=None):
             for name in sorted(old - current):
                 event('VFD', label + ': ' + name, 'cleared', label + ' cleared: ' + name)
             save(key, sorted(current))
-        last = previous('last_fault')
-        if last is not None and sample['fault_last'] and sample['fault_last'] != last:
-            event('VFD', 'LAST_FAULT_CHANGED', 'observed', 'Last recorded fault changed: ' + sample['fault_last_name'])
-        save('last_fault', sample['fault_last'])
 
     local = datetime.fromtimestamp(ts / 1000)
     day = local.date()
